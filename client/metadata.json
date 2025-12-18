@@ -1,0 +1,5 @@
+{
+  "name": "QuizWiz",
+  "description": "A real-time multiplayer quiz game using P2P connection.",
+  "requestFramePermissions": []
+}
