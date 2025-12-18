@@ -62,8 +62,32 @@ export const getQuizzesFromSheet = async (): Promise<Quiz[] | null> => {
   }
 };
 
+export const deleteQuizFromSheet = async (quizId: string) => {
+  const url = getSheetUrl();
+  if (!url) return;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'DELETE_QUIZ',
+        quizId
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Server error: ${response.status}`);
+    }
+  } catch (error) {
+    console.error("Failed to delete quiz from sheet", error);
+    throw error;
+  }
+};
+
 export const saveGameResultToSheet = async (
-  gameId: string, 
+  gameId: string,
+  quizId: string,
   quizTitle: string, 
   winnerName: string, 
   winnerScore: number, 
@@ -79,6 +103,7 @@ export const saveGameResultToSheet = async (
       body: JSON.stringify({
         action: 'SAVE_RESULT',
         gameId,
+        quizId,
         quizTitle,
         winnerName,
         winnerScore,

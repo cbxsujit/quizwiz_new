@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Quiz } from '../types';
 import { Plus, Play, Trash2, LayoutGrid, Trophy, Pencil, Cloud, Link, RefreshCw, UploadCloud, Check, HelpCircle, X, Copy } from 'lucide-react';
-import { getQuizzesFromSheet, getSheetUrl, setSheetUrl, clearSheetUrl, saveQuizToSheet } from '../services/sheetService';
+import { getQuizzesFromSheet, getSheetUrl, setSheetUrl, clearSheetUrl, saveQuizToSheet, deleteQuizFromSheet } from '../services/sheetService';
+import { convertGoogleDriveUrl } from '../utils';
 
 interface QuizDashboardProps {
   onPlay: (quiz: Quiz) => void;
@@ -83,96 +84,204 @@ const GAS_CODE = `function doPost(e) {
   lock.tryLock(10000);
 
   try {
-    const doc = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = doc.getSheetByName('Quizzes') || doc.insertSheet('Quizzes');
-    const resultsSheet = doc.getSheetByName('Results') || doc.insertSheet('Results');
-
-    // Ensure Headers exist for readability
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(['ID', 'Title', 'Description', 'JSON_Data', 'Last_Updated']);
-      sheet.setFrozenRows(1);
-    }
-    if (resultsSheet.getLastRow() === 0) {
-      resultsSheet.appendRow(['Game_ID', 'Quiz_Title', 'Winner', 'Score', 'Full_Rankings', 'Date_Played']);
-      resultsSheet.setFrozenRows(1);
-    }
-
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
     const data = JSON.parse(e.postData.contents);
     const action = data.action;
-    
-    let result = { status: 'success' };
+
+    // Define column headers
+    const QUIZ_HEADERS = ['Quiz_ID','Title','Description','Cover_Image','Created_At','Question_ID','Question_Type','Question_Text','Time_Limit','Option_1','Option_2','Option_3','Option_4','Correct_Option_ID','Correct_Answer','Min','Max','Step','Correct_Value','Media_Type','Media_URL'];
+    const RESULT_HEADERS = ['Game_ID','Quiz_ID','Quiz_Title','Winner_Name','Winner_Score','Player_ID','Player_Name','Rank','Score','Saved_At'];
 
     if (action === 'SAVE_QUIZ') {
+      let sheet = ss.getSheetByName('Quizzes');
+      if (!sheet) {
+        sheet = ss.insertSheet('Quizzes');
+        sheet.appendRow(QUIZ_HEADERS);
+        sheet.setFrozenRows(1);
+      } else if (sheet.getLastRow() === 0) {
+        sheet.appendRow(QUIZ_HEADERS);
+        sheet.setFrozenRows(1);
+      }
+
       const quiz = data.quiz;
-      const lastRow = sheet.getLastRow();
-      let rowIndex = -1;
       
-      // Check if ID exists in Column A (Index 0)
-      if (lastRow > 1) {
-         const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues().flat();
-         const foundIdx = ids.indexOf(quiz.id);
-         if (foundIdx !== -1) rowIndex = foundIdx + 2; // +2 because of header and 0-based index
+      // Remove existing rows for this quiz ID
+      const allData = sheet.getDataRange().getValues();
+      const rowsToKeep = allData.filter((row, idx) => idx === 0 || row[0] !== quiz.id);
+      
+      if (rowsToKeep.length < allData.length) {
+        sheet.clear();
+        if (rowsToKeep.length > 0) {
+          sheet.getRange(1, 1, rowsToKeep.length, QUIZ_HEADERS.length).setValues(rowsToKeep);
+        }
       }
 
-      // Structure: ID | Title | Description | JSON | Date
-      const rowData = [
+      // Add new rows - one per question
+      const questions = quiz.questions || [];
+      const newRows = questions.map(q => [
         quiz.id,
-        quiz.title,
+        quiz.title || '',
         quiz.description || '',
-        JSON.stringify(quiz),
-        new Date().toISOString()
-      ];
+        quiz.coverImageUrl || '',
+        new Date(quiz.createdAt || Date.now()),
+        q.id,
+        q.type,
+        q.text || '',
+        q.timeLimit || 20,
+        q.options && q.options[0] ? q.options[0].text : '',
+        q.options && q.options[1] ? q.options[1].text : '',
+        q.options && q.options[2] ? q.options[2].text : '',
+        q.options && q.options[3] ? q.options[3].text : '',
+        q.correctOptionId || '',
+        q.correctAnswer || '',
+        q.min !== undefined ? q.min : '',
+        q.max !== undefined ? q.max : '',
+        q.step !== undefined ? q.step : '',
+        q.correctValue !== undefined ? q.correctValue : '',
+        q.mediaType || '',
+        q.mediaUrl || ''
+      ]);
 
-      if (rowIndex !== -1) {
-        // Update existing row (1 row, 5 columns)
-        sheet.getRange(rowIndex, 1, 1, 5).setValues([rowData]);
-      } else {
-        sheet.appendRow(rowData);
+      if (newRows.length > 0) {
+        sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, QUIZ_HEADERS.length).setValues(newRows);
       }
-    } else if (action === 'GET_QUIZZES') {
-      const rows = sheet.getDataRange().getValues();
-      const quizzes = [];
-      // Row 1 is header, start from 2 (index 1)
-      for (let i = 1; i < rows.length; i++) {
-        // The JSON data is now in Column D (Index 3)
-        // We fallback to Index 1 (Col B) to support older sheet versions if needed, 
-        // but prefer the new structure.
-        let jsonStr = rows[i][3]; 
-        
-        // Fallback for old structure where JSON was in Col B
-        if (!jsonStr || !jsonStr.startsWith('{')) {
-             if (rows[i][1] && rows[i][1].startsWith('{')) {
-                 jsonStr = rows[i][1];
-             }
-        }
-
-        if (jsonStr) {
-           try {
-             quizzes.push(JSON.parse(jsonStr));
-           } catch (e) {}
-        }
-      }
-      result.quizzes = quizzes;
-      result.result = 'success';
-    } else if (action === 'SAVE_RESULT') {
-       resultsSheet.appendRow([
-         data.gameId, 
-         data.quizTitle, 
-         data.winnerName, 
-         data.winnerScore, 
-         JSON.stringify(data.fullRankings), 
-         new Date().toISOString()
-       ]);
+      
+      return ContentService.createTextOutput(JSON.stringify({result: 'success'})).setMimeType(ContentService.MimeType.JSON);
     }
 
-    return ContentService
-      .createTextOutput(JSON.stringify(result))
-      .setMimeType(ContentService.MimeType.JSON);
+    if (action === 'GET_QUIZZES') {
+      const sheet = ss.getSheetByName('Quizzes');
+      if (!sheet || sheet.getLastRow() <= 1) {
+        return ContentService.createTextOutput(JSON.stringify({result: 'success', quizzes: []})).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      const rows = sheet.getDataRange().getValues();
+      const quizzesMap = {};
+
+      // Skip header row
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const quizId = r[0];
+        if (!quizId) continue;
+
+        // Create quiz object if not exists
+        if (!quizzesMap[quizId]) {
+          quizzesMap[quizId] = {
+            id: quizId,
+            title: r[1] || '',
+            description: r[2] || '',
+            coverImageUrl: r[3] || '',
+            createdAt: r[4] ? new Date(r[4]).getTime() : Date.now(),
+            questions: []
+          };
+        }
+
+        // Build question object
+        const qType = r[6] || 'MC';
+        const question = {
+          id: r[5],
+          type: qType,
+          text: r[7] || '',
+          timeLimit: Number(r[8]) || 20
+        };
+
+        // Add options for MC, POLL, TRUE_FALSE
+        if (qType === 'TRUE_FALSE') {
+          question.options = [
+            { id: 'true', color: 'blue', text: r[9] || 'True' },
+            { id: 'false', color: 'red', text: r[10] || 'False' }
+          ];
+          question.correctOptionId = r[13] || 'true';
+        } else if (qType === 'MC' || qType === 'POLL') {
+          const colors = ['red','blue','green','yellow'];
+          question.options = [];
+          for (let j = 0; j < 4; j++) {
+            if (r[9 + j]) {
+              question.options.push({
+                id: 'opt' + (j + 1),
+                color: colors[j],
+                text: r[9 + j]
+              });
+            }
+          }
+          if (qType === 'MC') question.correctOptionId = r[13] || 'opt1';
+        } else if (qType === 'OPEN_ENDED') {
+          question.correctAnswer = r[14] || '';
+        } else if (qType === 'SLIDER') {
+          question.min = r[15] !== '' ? Number(r[15]) : 0;
+          question.max = r[16] !== '' ? Number(r[16]) : 100;
+          question.step = r[17] !== '' ? Number(r[17]) : 1;
+          question.correctValue = r[18] !== '' ? Number(r[18]) : 50;
+        }
+
+        // Add media if present
+        if (r[19]) question.mediaType = r[19];
+        if (r[20]) question.mediaUrl = r[20];
+
+        quizzesMap[quizId].questions.push(question);
+      }
+
+      return ContentService.createTextOutput(JSON.stringify({result: 'success', quizzes: Object.values(quizzesMap)})).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'DELETE_QUIZ') {
+      const quizId = data.quizId;
+      if (!quizId) throw new Error('Missing quizId');
+
+      const sheet = ss.getSheetByName('Quizzes');
+      if (!sheet || sheet.getLastRow() <= 1) {
+        return ContentService.createTextOutput(JSON.stringify({result: 'success'})).setMimeType(ContentService.MimeType.JSON);
+      }
+
+      // Remove all rows with this quiz ID
+      const allData = sheet.getDataRange().getValues();
+      const rowsToKeep = allData.filter((row, idx) => idx === 0 || row[0] !== quizId);
+      
+      sheet.clear();
+      if (rowsToKeep.length > 0) {
+        sheet.getRange(1, 1, rowsToKeep.length, QUIZ_HEADERS.length).setValues(rowsToKeep);
+      }
+      
+      return ContentService.createTextOutput(JSON.stringify({result: 'success'})).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'SAVE_RESULT') {
+      let sheet = ss.getSheetByName('Results');
+      if (!sheet) {
+        sheet = ss.insertSheet('Results');
+        sheet.appendRow(RESULT_HEADERS);
+        sheet.setFrozenRows(1);
+      } else if (sheet.getLastRow() === 0) {
+        sheet.appendRow(RESULT_HEADERS);
+        sheet.setFrozenRows(1);
+      }
+
+      const rankings = data.fullRankings || [];
+      const now = new Date();
+      
+      // One row per player
+      const rows = rankings.map(player => [
+        data.gameId || '',
+        data.quizId || '',
+        data.quizTitle || '',
+        data.winnerName || '',
+        data.winnerScore || 0,
+        player.id || '',
+        player.name || '',
+        player.rank || 0,
+        player.score || 0,
+        now
+      ]);
+
+      if (rows.length > 0) {
+        sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, RESULT_HEADERS.length).setValues(rows);
+      }
+      
+      return ContentService.createTextOutput(JSON.stringify({result: 'success'})).setMimeType(ContentService.MimeType.JSON);
+    }
 
   } catch (e) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ 'result': 'error', 'error': e.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({result: 'error', error: e.toString()})).setMimeType(ContentService.MimeType.JSON);
   } finally {
     lock.releaseLock();
   }
@@ -201,41 +310,47 @@ const QuizDashboard: React.FC<QuizDashboardProps> = ({ onPlay, onCreate, onEdit,
     setIsLoading(true);
     const sheetUrl = getSheetUrl();
     
-    // 1. Load Local
-    const localSaved = localStorage.getItem('quizwiz_quizzes');
-    let localQuizzes: Quiz[] = [];
-
-    if (localSaved) {
-        try {
-            localQuizzes = JSON.parse(localSaved);
-        } catch (e) {
-            console.error("Error parsing local quizzes", e);
-            localQuizzes = [DEFAULT_QUIZ];
-            localStorage.setItem('quizwiz_quizzes', JSON.stringify(localQuizzes));
-        }
-    } else {
-        localQuizzes = [DEFAULT_QUIZ];
-        localStorage.setItem('quizwiz_quizzes', JSON.stringify(localQuizzes));
-    }
-    
-    // 2. If connected, try to fetch cloud
+    // If connected, fetch from cloud only
     if (sheetUrl) {
       try {
         const cloudQuizzes = await getQuizzesFromSheet();
-        if (cloudQuizzes) {
-          const cloudIds = new Set(cloudQuizzes.map(q => q.id));
-          const uniqueLocal = localQuizzes.filter((q: Quiz) => !cloudIds.has(q.id));
-          setQuizzes([...cloudQuizzes, ...uniqueLocal]);
+        if (cloudQuizzes && cloudQuizzes.length > 0) {
+          setQuizzes(cloudQuizzes);
           setIsConnected(true);
         } else {
-           setQuizzes(localQuizzes);
+          // If cloud is empty, show default quiz
+          setQuizzes([DEFAULT_QUIZ]);
+          setIsConnected(true);
         }
       } catch (e) {
         console.error(e);
-        setQuizzes(localQuizzes);
+        // On error, fallback to local
+        const localSaved = localStorage.getItem('quizwiz_quizzes');
+        if (localSaved) {
+          try {
+            setQuizzes(JSON.parse(localSaved));
+          } catch (err) {
+            setQuizzes([DEFAULT_QUIZ]);
+          }
+        } else {
+          setQuizzes([DEFAULT_QUIZ]);
+        }
       }
     } else {
-      setQuizzes(localQuizzes);
+      // Not connected - use local storage
+      const localSaved = localStorage.getItem('quizwiz_quizzes');
+      if (localSaved) {
+        try {
+          setQuizzes(JSON.parse(localSaved));
+        } catch (e) {
+          console.error("Error parsing local quizzes", e);
+          setQuizzes([DEFAULT_QUIZ]);
+          localStorage.setItem('quizwiz_quizzes', JSON.stringify([DEFAULT_QUIZ]));
+        }
+      } else {
+        setQuizzes([DEFAULT_QUIZ]);
+        localStorage.setItem('quizwiz_quizzes', JSON.stringify([DEFAULT_QUIZ]));
+      }
     }
     setIsLoading(false);
   };
@@ -281,12 +396,24 @@ const QuizDashboard: React.FC<QuizDashboardProps> = ({ onPlay, onCreate, onEdit,
     }
   };
 
-  const handleDelete = (id: string, e: React.MouseEvent) => {
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm('Are you sure you want to delete this quiz?')) {
       const updated = quizzes.filter(q => q.id !== id);
       setQuizzes(updated);
+      
+      // Delete from local storage
       localStorage.setItem('quizwiz_quizzes', JSON.stringify(updated));
+      
+      // Delete from sheet if connected
+      if (isConnected && getSheetUrl()) {
+        try {
+          await deleteQuizFromSheet(id);
+        } catch (error) {
+          console.error('Failed to delete from sheet', error);
+          alert('Quiz deleted locally, but failed to delete from Google Sheet. Please check your connection.');
+        }
+      }
     }
   };
 
@@ -437,7 +564,7 @@ const QuizDashboard: React.FC<QuizDashboardProps> = ({ onPlay, onCreate, onEdit,
                 <div className="h-40 w-full bg-slate-100 dark:bg-slate-700 relative overflow-hidden">
                     {quiz.coverImageUrl ? (
                         <img 
-                            src={quiz.coverImageUrl} 
+                            src={convertGoogleDriveUrl(quiz.coverImageUrl)} 
                             alt={quiz.title} 
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                         />

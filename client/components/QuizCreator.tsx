@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Quiz, Question, QuestionType, MediaType } from '../types';
 import { Save, Plus, Trash2, X, AlertCircle, Clock, Loader2, Upload, Download, FileText, MessageSquare, PieChart, Image as ImageIcon, Youtube, Settings, Sparkles, Bot, Brain, Key } from 'lucide-react';
 import { saveQuizToSheet } from '../services/sheetService';
-import { getYoutubeId } from '../utils';
+import { getYoutubeId, convertGoogleDriveUrl } from '../utils';
 import { GoogleGenAI, Type } from "@google/genai";
 
 interface QuizCreatorProps {
@@ -36,6 +36,7 @@ const QuizCreator: React.FC<QuizCreatorProps> = ({ onSave, onCancel, initialQuiz
   ]);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [imageError, setImageError] = useState(false);
 
   // AI Generation State
   const [showAIModal, setShowAIModal] = useState(false);
@@ -497,13 +498,26 @@ const QuizCreator: React.FC<QuizCreatorProps> = ({ onSave, onCancel, initialQuiz
                 <div className="space-y-2">
                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Cover Image</label>
                    <div className="aspect-video bg-slate-100 dark:bg-slate-900 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex flex-col items-center justify-center overflow-hidden relative group">
-                      {coverImageUrl ? (
+                      {coverImageUrl && !imageError ? (
                          <>
-                           <img src={coverImageUrl} className="w-full h-full object-cover" alt="Cover" />
+                           <img 
+                             src={convertGoogleDriveUrl(coverImageUrl)} 
+                             className="w-full h-full object-cover" 
+                             alt="Cover"
+                             onError={() => setImageError(true)}
+                             onLoad={() => setImageError(false)}
+                           />
                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                             <button onClick={() => setCoverImageUrl('')} className="text-white bg-red-500 p-2 rounded-full hover:bg-red-600 transition-colors"><Trash2 className="w-5 h-5" /></button>
+                             <button onClick={() => { setCoverImageUrl(''); setImageError(false); }} className="text-white bg-red-500 p-2 rounded-full hover:bg-red-600 transition-colors"><Trash2 className="w-5 h-5" /></button>
                            </div>
                          </>
+                      ) : coverImageUrl && imageError ? (
+                         <div className="text-center p-4">
+                            <AlertCircle className="w-10 h-10 mx-auto text-red-400 mb-2" />
+                            <p className="text-xs text-red-500 font-semibold">Failed to load image</p>
+                            <p className="text-[10px] text-slate-400 mt-1">Check if link is public</p>
+                            <button onClick={() => { setCoverImageUrl(''); setImageError(false); }} className="mt-2 text-xs text-red-500 underline">Remove</button>
+                         </div>
                       ) : (
                          <div className="text-center p-4">
                             <ImageIcon className="w-10 h-10 mx-auto text-slate-400 mb-2" />
@@ -514,10 +528,13 @@ const QuizCreator: React.FC<QuizCreatorProps> = ({ onSave, onCancel, initialQuiz
                    <input 
                         type="text" 
                         value={coverImageUrl} 
-                        onChange={(e) => setCoverImageUrl(e.target.value)}
+                        onChange={(e) => { setCoverImageUrl(e.target.value); setImageError(false); }}
                         placeholder="Paste image URL here..." 
                         className="w-full text-sm bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-700 dark:text-slate-300 outline-none focus:border-indigo-500 transition-colors" 
                    />
+                   <p className="text-xs text-slate-400 mt-1">
+                     💡 For Google Drive: Right-click → Share → "Anyone with the link" → Copy link
+                   </p>
                 </div>
             </div>
 
@@ -606,7 +623,7 @@ const QuizCreator: React.FC<QuizCreatorProps> = ({ onSave, onCancel, initialQuiz
                         {q.mediaType === 'youtube' || (q.mediaUrl.includes('youtube') || q.mediaUrl.includes('youtu.be')) ? (
                             <div className="text-slate-500 flex items-center gap-2 p-4 text-sm"><Youtube className="w-5 h-5 text-red-500" /> Video will be embedded</div>
                         ) : (
-                            <img src={q.mediaUrl} alt="Preview" className="h-full object-contain" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                            <img src={convertGoogleDriveUrl(q.mediaUrl)} alt="Preview" className="h-full object-contain" onError={(e) => (e.currentTarget.style.display = 'none')} />
                         )}
                      </div>
                  )}

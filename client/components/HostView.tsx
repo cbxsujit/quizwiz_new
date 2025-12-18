@@ -36,6 +36,7 @@ const HostView: React.FC<HostViewProps> = ({ onBack, quiz }) => {
   const peerRef = useRef<Peer | null>(null);
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map());
   const timerRef = useRef<number | null>(null);
+  const resultsSavedRef = useRef<boolean>(false);
   const QUESTIONS = quiz.questions;
 
   useEffect(() => {
@@ -200,6 +201,25 @@ const HostView: React.FC<HostViewProps> = ({ onBack, quiz }) => {
         setGameState('GAME_OVER');
         const sorted = [...players].sort((a, b) => b.score - a.score);
         sorted.forEach((p, i) => connectionsRef.current.get(p.id)?.send({ type: 'GAME_OVER', rank: i + 1, score: p.score }));
+        
+        // Save results to sheet
+        if (!resultsSavedRef.current && sorted.length > 0) {
+          resultsSavedRef.current = true;
+          const rankings = sorted.map((p, idx) => ({
+            id: p.id,
+            name: p.name,
+            rank: idx + 1,
+            score: p.score
+          }));
+          saveGameResultToSheet(
+            gameId,
+            quiz.id,
+            quiz.title,
+            sorted[0].name,
+            sorted[0].score,
+            rankings
+          );
+        }
     }
   };
 
@@ -284,6 +304,7 @@ const HostView: React.FC<HostViewProps> = ({ onBack, quiz }) => {
 
   if (gameState === 'GAME_OVER') {
     const top3 = [...players].sort((a, b) => b.score - a.score).slice(0, 3);
+    
     return (
       <div className="min-h-screen flex flex-col items-center pt-12 px-6 bg-indigo-50 dark:bg-slate-900 overflow-hidden">
         <h1 className="text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-500 mb-12 animate-pop">Final Results</h1>
